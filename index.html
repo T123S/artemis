@@ -4,11 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Artemis II - Flugbahn-Visualisierung</title>
+    <!-- Raketen-Favicon als Inline-SVG (keine externen Dateien nötig) -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; color: white; font-family: 'Inter', sans-serif; touch-action: none; }
         #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 1rem; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 1rem; overflow: hidden;}
         @media (min-width: 640px) { #ui-layer { padding: 1.5rem; } }
         
         .glass-panel { background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); pointer-events: auto; }
@@ -18,7 +20,11 @@
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #3b82f6; cursor: pointer; margin-top: -7px; box-shadow: 0 0 10px rgba(59, 130, 246, 0.8); }
         input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: rgba(255, 255, 255, 0.2); border-radius: 2px; }
         input[type=range]:focus { outline: none; }
+
+        /* 3D Label Styles */
+        .scene-label { position: absolute; top: 0; left: 0; transform: translate(-50%, -50%); pointer-events: none; z-index: 5; text-shadow: 0 2px 4px rgba(0,0,0,0.8); will-change: transform; }
     </style>
+    <!-- Import maps polyfill für Three.js -->
     <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
     <script type="importmap">
         {
@@ -31,11 +37,20 @@
 </head>
 <body>
 
+    <!-- 3D Canvas -->
     <div id="canvas-container"></div>
 
+    <!-- 3D Labels (werden per JS positioniert) -->
+    <div id="label-earth" class="scene-label text-sm text-blue-300 font-bold hidden">🌍 Erde</div>
+    <div id="label-moon" class="scene-label text-sm text-gray-300 font-bold hidden">🌕 Mond</div>
+    <div id="label-orion" class="scene-label text-[10px] text-white bg-blue-600/60 px-1.5 py-0.5 rounded backdrop-blur-sm hidden border border-blue-400/50">Orion</div>
+
+    <!-- UI Overlay -->
     <div id="ui-layer">
+        <!-- Top Section -->
         <div class="flex justify-between items-start w-full gap-4">
             
+            <!-- Breiteres, schmaleres Telemetrie-Panel -->
             <div class="glass-panel p-2 sm:p-3 rounded-xl shadow-2xl w-full max-w-3xl flex flex-col md:flex-row md:items-center gap-2 sm:gap-4 flex-shrink">
                 
                 <div class="flex items-center justify-between md:justify-start gap-4 md:w-1/3">
@@ -71,31 +86,43 @@
                 </div>
             </div>
 
+            <!-- Hilfetext (nur auf Desktop) -->
             <div class="glass-panel p-4 rounded-xl text-sm text-gray-300 max-w-xs hidden lg:block ml-auto flex-shrink-0">
                 <p>💡 <b>Steuerung:</b></p>
                 <ul class="list-disc list-inside mt-2 space-y-1">
                     <li>Ziehen zum Drehen</li>
                     <li>Scrollen zum Zoomen</li>
-                    <li>Zeitleiste unten zur Steuerung</li>
+                    <li>Kamera-Button unten rechts für Fokus</li>
                 </ul>
             </div>
         </div>
 
-        <div class="glass-panel p-3 sm:p-5 rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-4xl mx-auto flex items-center gap-3 sm:gap-6 mt-auto">
-            <button id="play-pause-btn" class="bg-blue-600 hover:bg-blue-500 text-white rounded-full p-2.5 sm:p-4 transition-colors focus:outline-none flex-shrink-0 shadow-lg">
-                <svg id="icon-play" class="w-5 h-5 sm:w-6 sm:h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6z"></path></svg>
-                <svg id="icon-pause" class="w-5 h-5 sm:w-6 sm:h-6 hidden" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
-            </button>
+        <!-- Bottom Section -->
+        <div class="w-full flex items-end gap-2 sm:gap-4 mt-auto">
             
-            <div class="w-full flex flex-col relative pt-1">
-                <div class="flex justify-between text-[9px] sm:text-xs text-gray-400 mb-1.5 px-1 font-medium">
-                    <span class="hidden sm:inline">Start</span>
-                    <span>Orbits</span>
-                    <span>Mond-Flyby</span>
-                    <span>Splashdown</span>
+            <!-- Timeline Controls -->
+            <div class="glass-panel p-3 sm:p-5 rounded-xl sm:rounded-2xl shadow-2xl flex-grow flex items-center gap-3 sm:gap-6">
+                <button id="play-pause-btn" class="bg-blue-600 hover:bg-blue-500 text-white rounded-full p-2.5 sm:p-4 transition-colors focus:outline-none flex-shrink-0 shadow-lg">
+                    <svg id="icon-play" class="w-5 h-5 sm:w-6 sm:h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6z"></path></svg>
+                    <svg id="icon-pause" class="w-5 h-5 sm:w-6 sm:h-6 hidden" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+                </button>
+                
+                <div class="w-full flex flex-col relative pt-1">
+                    <div class="flex justify-between text-[9px] sm:text-xs text-gray-400 mb-1.5 px-1 font-medium">
+                        <span class="hidden sm:inline">Start</span>
+                        <span>Orbits</span>
+                        <span>Mond-Flyby</span>
+                        <span>Splashdown</span>
+                    </div>
+                    <input type="range" id="timeline-slider" min="0" max="1" step="0.001" value="0">
                 </div>
-                <input type="range" id="timeline-slider" min="0" max="1" step="0.001" value="0">
             </div>
+
+            <!-- Kamera Toggle Button -->
+            <button id="camera-btn" class="glass-panel text-white rounded-xl sm:rounded-2xl p-3 sm:p-5 flex-shrink-0 flex flex-col items-center justify-center transition-all hover:bg-white/10 active:scale-95" title="Kamera Fokus ändern">
+                <svg class="w-5 h-5 sm:w-6 sm:h-6 text-gray-300 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                <span id="camera-target-text" class="text-[8px] sm:text-[10px] font-bold text-blue-400 uppercase tracking-wide">Fokus: Erde</span>
+            </button>
         </div>
     </div>
 
@@ -104,7 +131,7 @@
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
         // --- Konstanten & Setup ---
-        const DISTANCE_SCALE = 10000; // 1 Three.js Unit = 10.000 km
+        const DISTANCE_SCALE = 10000; 
         const EARTH_RADIUS = 6371 / DISTANCE_SCALE;
         const MOON_RADIUS = 1737 / DISTANCE_SCALE;
         const EARTH_MOON_DIST = 384400 / DISTANCE_SCALE;
@@ -114,6 +141,10 @@
         let progress = 0.0;
         let playbackSpeed = 0.0004; 
         let lastPos = new THREE.Vector3();
+
+        // Kamera Fokus Variablen
+        const TARGETS = ['Erde', 'Mond', 'Orion'];
+        let currentTargetIdx = 0; // 0 = Erde, 1 = Mond, 2 = Orion
 
         // --- Szene, Kamera, Renderer ---
         const container = document.getElementById('canvas-container');
@@ -131,8 +162,8 @@
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
-        controls.maxDistance = 200;
-        controls.minDistance = 1.5;
+        controls.maxDistance = 250;
+        controls.minDistance = 1.0;
 
         // --- Beleuchtung ---
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
@@ -144,10 +175,10 @@
 
         // --- Sterne ---
         const starsGeometry = new THREE.BufferGeometry();
-        const starsCount = 4000;
+        const starsCount = 5000;
         const posArray = new Float32Array(starsCount * 3);
         for(let i = 0; i < starsCount * 3; i++) {
-            posArray[i] = (Math.random() - 0.5) * 600;
+            posArray[i] = (Math.random() - 0.5) * 800;
         }
         starsGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
         const starsMaterial = new THREE.PointsMaterial({ size: 0.1, color: 0xffffff, transparent: true, opacity: 0.8 });
@@ -170,48 +201,60 @@
         moon.position.set(EARTH_MOON_DIST, 0, 0);
         scene.add(moon);
 
-        // --- Flugbahn inkl. Erd-Orbits ---
+        // --- Flugbahn inkl. perfektionierter, runder Erd-Orbits ---
         const r_leo = EARTH_RADIUS + 0.1; 
         const r_heo = EARTH_RADIUS * 4.0; 
         
+        // Durch deutlich mehr Wegpunkte (Stützstellen) werden die Kurven extrem rund und sauber
         const curvePoints = [
-            // Start & LEO
+            // LEO (Runde Umlaufbahn)
             new THREE.Vector3(r_leo, 0, 0),
-            new THREE.Vector3(0, r_leo*0.3, -r_leo),
+            new THREE.Vector3(r_leo*0.7, r_leo*0.3, -r_leo*0.7),
+            new THREE.Vector3(0, r_leo*0.4, -r_leo),
+            new THREE.Vector3(-r_leo*0.7, r_leo*0.3, -r_leo*0.7),
             new THREE.Vector3(-r_leo, 0, 0),
-            new THREE.Vector3(0, -r_leo*0.3, r_leo),
+            new THREE.Vector3(-r_leo*0.7, -r_leo*0.3, r_leo*0.7),
+            new THREE.Vector3(0, -r_leo*0.4, r_leo),
+            new THREE.Vector3(r_leo*0.7, -r_leo*0.3, r_leo*0.7),
             new THREE.Vector3(r_leo, 0, 0),
-            
-            // HEO
-            new THREE.Vector3(r_heo*0.2, r_heo*0.3, -r_heo*0.5),
-            new THREE.Vector3(-r_heo, 0, 0),
-            new THREE.Vector3(-r_heo*0.2, -r_heo*0.3, r_heo*0.5),
-            new THREE.Vector3(r_leo + 0.1, 0, 0), 
+
+            // Übergang zu HEO (Elliptisch, sauber berechnet)
+            new THREE.Vector3(r_heo*0.4, r_heo*0.2, -r_heo*0.4),
+            new THREE.Vector3(0, r_heo*0.3, -r_heo),
+            new THREE.Vector3(-r_heo*0.6, 0, -r_heo*0.6),
+            new THREE.Vector3(-r_heo, -r_heo*0.1, 0),
+            new THREE.Vector3(-r_heo*0.6, -r_heo*0.3, r_heo*0.6),
+            new THREE.Vector3(0, -r_heo*0.4, r_heo),
+            new THREE.Vector3(r_leo*1.5, -r_leo*0.2, r_leo*1.5),
+            new THREE.Vector3(r_leo, 0, 0), 
             
             // Translunar Injection (TLI)
-            new THREE.Vector3(EARTH_MOON_DIST * 0.2, 2, -2),
-            new THREE.Vector3(EARTH_MOON_DIST * 0.5, 5, -3),
-            new THREE.Vector3(EARTH_MOON_DIST * 0.8, 4, -2),
+            new THREE.Vector3(EARTH_MOON_DIST * 0.15, 2, -1.5),
+            new THREE.Vector3(EARTH_MOON_DIST * 0.4, 4.5, -2.5),
+            new THREE.Vector3(EARTH_MOON_DIST * 0.7, 4, -2.5),
+            new THREE.Vector3(EARTH_MOON_DIST * 0.85, 2, -1.5),
             
-            // Mond-Vorbeiflug
-            new THREE.Vector3(EARTH_MOON_DIST - 1.5, 1, -1.5),             
-            new THREE.Vector3(EARTH_MOON_DIST + MOON_RADIUS + 0.6, 0, -0.5), 
-            new THREE.Vector3(EARTH_MOON_DIST + MOON_RADIUS + 0.6, -0.5, 1), 
-            new THREE.Vector3(EARTH_MOON_DIST - 1.5, -1, 1.5),             
+            // Mond-Vorbeiflug (Runde Achterschleife)
+            new THREE.Vector3(EARTH_MOON_DIST - 1.2, 0.5, -1.2),             
+            new THREE.Vector3(EARTH_MOON_DIST + MOON_RADIUS + 0.5, 0, -0.6), 
+            new THREE.Vector3(EARTH_MOON_DIST + MOON_RADIUS + 0.6, -0.2, 0), 
+            new THREE.Vector3(EARTH_MOON_DIST + MOON_RADIUS + 0.5, -0.3, 0.6), 
+            new THREE.Vector3(EARTH_MOON_DIST - 1.2, -0.8, 1.2),             
             
             // Rückweg
-            new THREE.Vector3(EARTH_MOON_DIST * 0.8, -4, 2),
-            new THREE.Vector3(EARTH_MOON_DIST * 0.5, -5, 3),
+            new THREE.Vector3(EARTH_MOON_DIST * 0.85, -3, 2),
+            new THREE.Vector3(EARTH_MOON_DIST * 0.5, -4.5, 3),
             new THREE.Vector3(EARTH_MOON_DIST * 0.2, -2, 2),
             
             // Splashdown
             new THREE.Vector3(0, -EARTH_RADIUS - 0.05, 0)
         ];
 
-        const trajectoryCurve = new THREE.CatmullRomCurve3(curvePoints, false, 'chordal', 0.5);
+        // "centripetal" sorgt für mathematisch saubere Kurven ohne Überschwinger an den Stützstellen
+        const trajectoryCurve = new THREE.CatmullRomCurve3(curvePoints, false, 'centripetal', 0.5);
         
-        // Flugbahn-Linie rendern (Farbverlauf nach Geschwindigkeit)
-        const tubularSegments = 400;
+        // Flugbahn-Linie rendern (Farbverlauf)
+        const tubularSegments = 500;
         const radialSegments = 6;
         const tubeGeo = new THREE.TubeGeometry(trajectoryCurve, tubularSegments, 0.04, radialSegments, false);
         
@@ -271,6 +314,13 @@
         const playPauseBtn = document.getElementById('play-pause-btn');
         const iconPlay = document.getElementById('icon-play');
         const iconPause = document.getElementById('icon-pause');
+        const cameraBtn = document.getElementById('camera-btn');
+        const cameraTargetText = document.getElementById('camera-target-text');
+
+        // Labels
+        const elLabelEarth = document.getElementById('label-earth');
+        const elLabelMoon = document.getElementById('label-moon');
+        const elLabelOrion = document.getElementById('label-orion');
 
         // --- Telemetrie & Logik ---
         function updateTelemetry() {
@@ -316,6 +366,25 @@
             }
         }
 
+        // --- Hilfsfunktion: 3D Labels auf 2D Bildschirm projizieren ---
+        function updateLabelPosition(object3D, element, offsetY = 0) {
+            const pos = object3D.position.clone();
+            pos.y += offsetY; // Leicht über dem Objekt platzieren
+            pos.project(camera);
+            
+            // Prüfen ob Objekt hinter der Kamera ist
+            if (pos.z > 1) {
+                element.classList.add('hidden');
+                return;
+            }
+            
+            const x = (pos.x * .5 + .5) * window.innerWidth;
+            const y = (pos.y * -.5 + .5) * window.innerHeight;
+            
+            element.classList.remove('hidden');
+            element.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
+        }
+
         // --- Event Listeners ---
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
@@ -338,6 +407,11 @@
                 iconPlay.classList.remove('hidden');
                 iconPause.classList.add('hidden');
             }
+        });
+
+        cameraBtn.addEventListener('click', () => {
+            currentTargetIdx = (currentTargetIdx + 1) % 3;
+            cameraTargetText.innerText = `Fokus: ${TARGETS[currentTargetIdx]}`;
         });
 
         // --- Render Loop ---
@@ -365,7 +439,20 @@
                 updateTelemetry();
             }
 
+            // Kamera sanft zum ausgewählten Ziel schwenken
+            let targetPos = new THREE.Vector3();
+            if (currentTargetIdx === 0) targetPos.copy(earthGroup.position);
+            else if (currentTargetIdx === 1) targetPos.copy(moon.position);
+            else if (currentTargetIdx === 2) targetPos.copy(shipGroup.position);
+            
+            controls.target.lerp(targetPos, 0.05);
             controls.update();
+
+            // Labels updaten
+            updateLabelPosition(earthGroup, elLabelEarth, EARTH_RADIUS + 0.5);
+            updateLabelPosition(moon, elLabelMoon, MOON_RADIUS + 0.5);
+            updateLabelPosition(shipGroup, elLabelOrion, 0.8);
+
             renderer.render(scene, camera);
         }
 
