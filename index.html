@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Artemis II - Flugbahn-Visualisierung</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; color: white; font-family: 'Inter', sans-serif; touch-action: none; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 1rem; }
+        @media (min-width: 640px) { #ui-layer { padding: 1.5rem; } }
+        
+        .glass-panel { background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); pointer-events: auto; }
+        
+        /* Custom range slider styling */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #3b82f6; cursor: pointer; margin-top: -7px; box-shadow: 0 0 10px rgba(59, 130, 246, 0.8); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: rgba(255, 255, 255, 0.2); border-radius: 2px; }
+        input[type=range]:focus { outline: none; }
+    </style>
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <div class="flex justify-between items-start w-full gap-4">
+            
+            <div class="glass-panel p-2 sm:p-3 rounded-xl shadow-2xl w-full max-w-3xl flex flex-col md:flex-row md:items-center gap-2 sm:gap-4 flex-shrink">
+                
+                <div class="flex items-center justify-between md:justify-start gap-4 md:w-1/3">
+                    <div>
+                        <h1 class="text-base sm:text-xl font-bold mb-0 text-blue-400 leading-tight">Artemis II</h1>
+                        <p class="text-[9px] sm:text-[11px] text-gray-300">Telemetrie</p>
+                    </div>
+                    <div class="text-right md:text-left flex-grow">
+                        <p class="text-[8px] sm:text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Phase</p>
+                        <p class="text-xs sm:text-sm font-semibold truncate" id="mission-phase">Lade...</p>
+                    </div>
+                </div>
+
+                <div class="hidden md:block w-px h-10 bg-white/10 mx-1"></div>
+
+                <div class="grid grid-cols-4 gap-1 sm:gap-3 w-full md:w-2/3">
+                    <div class="bg-white/5 rounded p-1.5 sm:p-2 text-center md:text-left">
+                        <p class="text-[8px] sm:text-[10px] text-gray-400 uppercase tracking-wider truncate">Von Erde</p>
+                        <p class="text-xs sm:text-sm font-mono mt-0.5 truncate" id="dist-earth">0</p>
+                    </div>
+                    <div class="bg-white/5 rounded p-1.5 sm:p-2 text-center md:text-left">
+                        <p class="text-[8px] sm:text-[10px] text-gray-400 uppercase tracking-wider truncate">Zum Mond</p>
+                        <p class="text-xs sm:text-sm font-mono mt-0.5 truncate" id="dist-moon">0</p>
+                    </div>
+                    <div class="bg-white/5 rounded p-1.5 sm:p-2 text-center md:text-left">
+                        <p class="text-[8px] sm:text-[10px] text-gray-400 uppercase tracking-wider truncate">Tempo</p>
+                        <p class="text-xs sm:text-sm font-mono mt-0.5 truncate" id="velocity">0</p>
+                    </div>
+                    <div class="bg-white/5 rounded p-1.5 sm:p-2 text-center md:text-left">
+                        <p class="text-[8px] sm:text-[10px] text-gray-400 uppercase tracking-wider truncate">Flugtag</p>
+                        <p class="text-xs sm:text-sm font-mono mt-0.5 truncate" id="flight-day">0.0</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-panel p-4 rounded-xl text-sm text-gray-300 max-w-xs hidden lg:block ml-auto flex-shrink-0">
+                <p>💡 <b>Steuerung:</b></p>
+                <ul class="list-disc list-inside mt-2 space-y-1">
+                    <li>Ziehen zum Drehen</li>
+                    <li>Scrollen zum Zoomen</li>
+                    <li>Zeitleiste unten zur Steuerung</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="glass-panel p-3 sm:p-5 rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-4xl mx-auto flex items-center gap-3 sm:gap-6 mt-auto">
+            <button id="play-pause-btn" class="bg-blue-600 hover:bg-blue-500 text-white rounded-full p-2.5 sm:p-4 transition-colors focus:outline-none flex-shrink-0 shadow-lg">
+                <svg id="icon-play" class="w-5 h-5 sm:w-6 sm:h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6z"></path></svg>
+                <svg id="icon-pause" class="w-5 h-5 sm:w-6 sm:h-6 hidden" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+            </button>
+            
+            <div class="w-full flex flex-col relative pt-1">
+                <div class="flex justify-between text-[9px] sm:text-xs text-gray-400 mb-1.5 px-1 font-medium">
+                    <span class="hidden sm:inline">Start</span>
+                    <span>Orbits</span>
+                    <span>Mond-Flyby</span>
+                    <span>Splashdown</span>
+                </div>
+                <input type="range" id="timeline-slider" min="0" max="1" step="0.001" value="0">
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Konstanten & Setup ---
+        const DISTANCE_SCALE = 10000; // 1 Three.js Unit = 10.000 km
+        const EARTH_RADIUS = 6371 / DISTANCE_SCALE;
+        const MOON_RADIUS = 1737 / DISTANCE_SCALE;
+        const EARTH_MOON_DIST = 384400 / DISTANCE_SCALE;
+        const MISSION_DURATION_DAYS = 10;
+        
+        let isPlaying = false;
+        let progress = 0.0;
+        let playbackSpeed = 0.0004; 
+        let lastPos = new THREE.Vector3();
+
+        // --- Szene, Kamera, Renderer ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.002);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 15, 30);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxDistance = 200;
+        controls.minDistance = 1.5;
+
+        // --- Beleuchtung ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
+        scene.add(ambientLight);
+        
+        const sunLight = new THREE.DirectionalLight(0xffffff, 2.5);
+        sunLight.position.set(50, 20, 50); 
+        scene.add(sunLight);
+
+        // --- Sterne ---
+        const starsGeometry = new THREE.BufferGeometry();
+        const starsCount = 4000;
+        const posArray = new Float32Array(starsCount * 3);
+        for(let i = 0; i < starsCount * 3; i++) {
+            posArray[i] = (Math.random() - 0.5) * 600;
+        }
+        starsGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        const starsMaterial = new THREE.PointsMaterial({ size: 0.1, color: 0xffffff, transparent: true, opacity: 0.8 });
+        scene.add(new THREE.Points(starsGeometry, starsMaterial));
+
+        // --- Erde ---
+        const earthGroup = new THREE.Group();
+        const earthGeo = new THREE.SphereGeometry(EARTH_RADIUS, 32, 32);
+        const earthMat = new THREE.MeshPhongMaterial({ color: 0x0284c7, emissive: 0x064e3b, shininess: 50 });
+        earthGroup.add(new THREE.Mesh(earthGeo, earthMat));
+        const atmosGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.05, 32, 32);
+        const atmosMat = new THREE.MeshBasicMaterial({ color: 0x7dd3fc, wireframe: true, transparent: true, opacity: 0.25 });
+        earthGroup.add(new THREE.Mesh(atmosGeo, atmosMat));
+        scene.add(earthGroup);
+
+        // --- Mond ---
+        const moonGeo = new THREE.SphereGeometry(MOON_RADIUS, 32, 32);
+        const moonMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.8 });
+        const moon = new THREE.Mesh(moonGeo, moonMat);
+        moon.position.set(EARTH_MOON_DIST, 0, 0);
+        scene.add(moon);
+
+        // --- Flugbahn inkl. Erd-Orbits ---
+        const r_leo = EARTH_RADIUS + 0.1; 
+        const r_heo = EARTH_RADIUS * 4.0; 
+        
+        const curvePoints = [
+            // Start & LEO
+            new THREE.Vector3(r_leo, 0, 0),
+            new THREE.Vector3(0, r_leo*0.3, -r_leo),
+            new THREE.Vector3(-r_leo, 0, 0),
+            new THREE.Vector3(0, -r_leo*0.3, r_leo),
+            new THREE.Vector3(r_leo, 0, 0),
+            
+            // HEO
+            new THREE.Vector3(r_heo*0.2, r_heo*0.3, -r_heo*0.5),
+            new THREE.Vector3(-r_heo, 0, 0),
+            new THREE.Vector3(-r_heo*0.2, -r_heo*0.3, r_heo*0.5),
+            new THREE.Vector3(r_leo + 0.1, 0, 0), 
+            
+            // Translunar Injection (TLI)
+            new THREE.Vector3(EARTH_MOON_DIST * 0.2, 2, -2),
+            new THREE.Vector3(EARTH_MOON_DIST * 0.5, 5, -3),
+            new THREE.Vector3(EARTH_MOON_DIST * 0.8, 4, -2),
+            
+            // Mond-Vorbeiflug
+            new THREE.Vector3(EARTH_MOON_DIST - 1.5, 1, -1.5),             
+            new THREE.Vector3(EARTH_MOON_DIST + MOON_RADIUS + 0.6, 0, -0.5), 
+            new THREE.Vector3(EARTH_MOON_DIST + MOON_RADIUS + 0.6, -0.5, 1), 
+            new THREE.Vector3(EARTH_MOON_DIST - 1.5, -1, 1.5),             
+            
+            // Rückweg
+            new THREE.Vector3(EARTH_MOON_DIST * 0.8, -4, 2),
+            new THREE.Vector3(EARTH_MOON_DIST * 0.5, -5, 3),
+            new THREE.Vector3(EARTH_MOON_DIST * 0.2, -2, 2),
+            
+            // Splashdown
+            new THREE.Vector3(0, -EARTH_RADIUS - 0.05, 0)
+        ];
+
+        const trajectoryCurve = new THREE.CatmullRomCurve3(curvePoints, false, 'chordal', 0.5);
+        
+        // Flugbahn-Linie rendern (Farbverlauf nach Geschwindigkeit)
+        const tubularSegments = 400;
+        const radialSegments = 6;
+        const tubeGeo = new THREE.TubeGeometry(trajectoryCurve, tubularSegments, 0.04, radialSegments, false);
+        
+        const colors = [];
+        const tempColor = new THREE.Color();
+        
+        for (let i = 0; i <= tubularSegments; i++) {
+            const t = i / tubularSegments;
+            const point = trajectoryCurve.getPointAt(t);
+            const distEarthUnits = point.distanceTo(new THREE.Vector3(0,0,0));
+            const distMoonUnits = point.distanceTo(new THREE.Vector3(EARTH_MOON_DIST, 0, 0));
+            
+            const earthInfluence = 8 / Math.max(1, distEarthUnits);
+            const moonInfluence = 3 / Math.max(0.5, distMoonUnits); 
+            const speedProxy = Math.max(0.1, earthInfluence, moonInfluence); 
+            
+            const normalizedSpeed = Math.min(1.0, Math.max(0.0, (speedProxy - 0.2) / 6.0));
+            const hue = 0.66 - (normalizedSpeed * 0.66);
+            tempColor.setHSL(hue, 1.0, 0.5);
+            
+            for (let j = 0; j <= radialSegments; j++) {
+                colors.push(tempColor.r, tempColor.g, tempColor.b);
+            }
+        }
+        
+        tubeGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        const tubeMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.8, wireframe: false });
+        scene.add(new THREE.Mesh(tubeGeo, tubeMat));
+
+        // --- Raumschiff (Orion Kapsel) ---
+        const shipGroup = new THREE.Group();
+        const shipGeo = new THREE.ConeGeometry(0.2, 0.5, 12);
+        shipGeo.rotateX(Math.PI / 2); 
+        const shipMat = new THREE.MeshPhongMaterial({ color: 0xffffff, emissive: 0x444444 });
+        shipGroup.add(new THREE.Mesh(shipGeo, shipMat));
+        
+        const panelGeo = new THREE.BoxGeometry(1.0, 0.04, 0.3);
+        const panelMat = new THREE.MeshBasicMaterial({ color: 0x1e40af });
+        const panel = new THREE.Mesh(panelGeo, panelMat);
+        panel.position.z = -0.15;
+        shipGroup.add(panel);
+
+        const beaconLight = new THREE.PointLight(0xff3300, 2, 3);
+        shipGroup.add(beaconLight);
+        scene.add(shipGroup);
+
+        lastPos.copy(trajectoryCurve.getPointAt(0));
+        shipGroup.position.copy(lastPos);
+
+        // --- UI Referenzen ---
+        const uiPhase = document.getElementById('mission-phase');
+        const uiDistEarth = document.getElementById('dist-earth');
+        const uiDistMoon = document.getElementById('dist-moon');
+        const uiVelocity = document.getElementById('velocity');
+        const uiFlightDay = document.getElementById('flight-day');
+        const slider = document.getElementById('timeline-slider');
+        const playPauseBtn = document.getElementById('play-pause-btn');
+        const iconPlay = document.getElementById('icon-play');
+        const iconPause = document.getElementById('icon-pause');
+
+        // --- Telemetrie & Logik ---
+        function updateTelemetry() {
+            const point = trajectoryCurve.getPointAt(progress);
+            const tangent = trajectoryCurve.getTangentAt(progress);
+            
+            shipGroup.position.copy(point);
+            shipGroup.lookAt(point.clone().add(tangent));
+
+            const distEarthUnits = point.distanceTo(earthGroup.position);
+            const distMoonUnits = point.distanceTo(moon.position);
+            
+            const altEarth = Math.max(0, (distEarthUnits - EARTH_RADIUS) * DISTANCE_SCALE);
+            const altMoon = Math.max(0, (distMoonUnits - MOON_RADIUS) * DISTANCE_SCALE);
+
+            let currentVelocity = 0;
+            if (progress > 0 && progress < 1) {
+                 const velocityMultiplier = Math.max(0.3, 8 / Math.max(1, distEarthUnits));
+                 currentVelocity = 15000 * velocityMultiplier + 3000; 
+            }
+
+            lastPos.copy(point);
+
+            let phase = "";
+            let colorClass = "text-white";
+            if (progress < 0.1) { phase = "Low Earth Orbit"; colorClass = "text-green-400"; }
+            else if (progress < 0.25) { phase = "High Earth Orbit"; colorClass = "text-teal-400"; }
+            else if (progress < 0.45) { phase = "TLI (Zum Mond)"; colorClass = "text-blue-400"; }
+            else if (progress < 0.6) { phase = "Mond-Flyby"; colorClass = "text-purple-400"; }
+            else if (progress < 0.95) { phase = "Rückflug"; colorClass = "text-orange-400"; }
+            else { phase = "Splashdown"; colorClass = "text-red-400"; }
+
+            uiPhase.innerHTML = `<span class="${colorClass}">${phase}</span>`;
+            uiDistEarth.innerHTML = `${Math.round(altEarth).toLocaleString('de-DE')} <span class="text-[8px] sm:text-[10px] text-gray-500">km</span>`;
+            uiDistMoon.innerHTML = `${Math.round(altMoon).toLocaleString('de-DE')} <span class="text-[8px] sm:text-[10px] text-gray-500">km</span>`;
+            uiVelocity.innerHTML = `${Math.round(currentVelocity).toLocaleString('de-DE')} <span class="text-[8px] sm:text-[10px] text-gray-500">km/h</span>`;
+            
+            const currentDay = (progress * MISSION_DURATION_DAYS).toFixed(1);
+            uiFlightDay.innerHTML = `${currentDay} <span class="text-[8px] sm:text-[10px] text-gray-500">/ 10</span>`;
+            
+            if(!slider.matches(':active')) {
+                slider.value = progress;
+            }
+        }
+
+        // --- Event Listeners ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        slider.addEventListener('input', (e) => {
+            progress = parseFloat(e.target.value);
+            updateTelemetry();
+        });
+
+        playPauseBtn.addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            if (isPlaying) {
+                iconPlay.classList.add('hidden');
+                iconPause.classList.remove('hidden');
+                if (progress >= 1) progress = 0; 
+            } else {
+                iconPlay.classList.remove('hidden');
+                iconPause.classList.add('hidden');
+            }
+        });
+
+        // --- Render Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            earthGroup.rotation.y += 0.001;
+            moon.rotation.y += 0.0005;
+
+            if (isPlaying) {
+                const point = trajectoryCurve.getPointAt(progress);
+                const distToEarth = point.distanceTo(earthGroup.position);
+                const distToMoon = point.distanceTo(moon.position);
+                
+                const distanceFactor = Math.min(distToEarth, distToMoon);
+                const dynamicSpeed = playbackSpeed * (0.15 + distanceFactor * 0.2);
+
+                progress += dynamicSpeed;
+                if (progress >= 1.0) {
+                    progress = 1.0;
+                    isPlaying = false;
+                    iconPlay.classList.remove('hidden');
+                    iconPause.classList.add('hidden');
+                }
+                updateTelemetry();
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        updateTelemetry();
+        animate();
+    </script>
+</body>
+</html>
+
+
